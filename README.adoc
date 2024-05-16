@@ -1,0 +1,41 @@
+= Distributed Systems SS2024 
+:toc:
+
+This repository holds the code for a chat application written in python. The application is part of the project assignment for the course "Distributed Systems" at Reutlingen University / University of Stuttgart.
+
+== Requirements
+The application satisfies the following requirements, defined by the project assignment:
+
+Dynamic Discovery of Hosts:: New clients and servers need to be initiated by dynamic discovery.
+Voting:: Every time a new server joins a system or an existing one fails, a election is held to select a leader.
+Fault Tolerance:: In order to ensure consistent operation of the system, failures need to be detected and dealt with accordingly.
+
+== Architecture
+
+.Dynamic Discovery
+image::../images/Discovery.png[]
+
+.Communication between clients
+image::../images/Comms.png[]
+
+== Components
+
+=== Server 
+To start a server locally, simply run the following command in a shell (assuming python is installed on your system): 
+
+[,python]
+----
+server.py
+----
+
+Once the server instance is started, it will broadcast its IP adress and check if its broadcast group already has a leader. If not, the server elects itself as the leader. If the broadcast group already has a leader, an election is triggered. The server with the highest process ID is elected as the new leader. If there has been a switch in leadership, the old leader acknowledges that it is no longer the leader of the group. The newly elected leader updates its group view and replicates it across the broadcast group, informing other servers of its new leadership position. 
+
+=== Client
+To start a client locally, simply run the following command in a shell (assuming python is installed on your system): 
+
+[,python]
+----
+client.py
+----
+Once the new client instance is started, it will broadcast its IP adress to the broadcast group. In return, it receives the current group view including information about the leader. Once the setup is complete, the client can continue with its chat application specific tasks like choosing a username and sending chat messages. The leader receives the messages sent by the client and distributes them accordingly. If there are multiple clients present in the same broadcast group, the clients can communicate with each other via the leading server.
+
