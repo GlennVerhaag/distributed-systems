@@ -13,10 +13,10 @@ Fault Tolerance:: In order to ensure consistent operation of the system, failure
 == Architecture
 
 .Dynamic Discovery
-image::../images/Discovery.png[]
+image::images\Discovery.png[width=700]
 
 .Communication between clients
-image::../images/Comms.png[]
+image::images\Comms.png[width=700]
 
 == Components
 
