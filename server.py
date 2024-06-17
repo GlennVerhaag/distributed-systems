@@ -15,12 +15,15 @@ from datetime import datetime
 import time
 import os
 import struct
-import multiprocessing
 
 #################################### Variables #######################################
-
+#
+# Setup socket to get own IP adress
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(("8.8.8.8", 80))
+#
 # Calculate broadcast IP here: https://jodies.de/ipcalc using your IPv4 Address and subnet mask (run "ipconfig" on windows to get adress and mask)
-BROADCAST_IP = "172.25.191.255"
+BROADCAST_IP = "192.168.43.255"
 BROADCAST_PORT = 5000
 BROADCAST_LISTENING_PORT = 5001
 SERVER_GROUP = "224.1.1.1"
@@ -33,7 +36,7 @@ HEARTBEAT_PORT = 8000
 HEARTBEAT_LISTENING_PORT = 8001
 MY_PROCESS_ID = os.getpid()
 MY_HOST = socket.gethostname()
-MY_IP = socket.gethostbyname(MY_HOST)
+MY_IP = s.getsockname()[0]
 SERVER_LIST={MY_PROCESS_ID:MY_IP}
 CLIENT_LIST=[]
 TIMEOUT = 2 # How long should the server wait for responses to initial broadcast? In seconds
@@ -44,22 +47,25 @@ LEADER_IP = ""
 #################################### Functions #######################################
  
 def join():
+    
     # Document the broadcast of own IP
     print(prefixMessageWithDatetime("Sending broadcast message with my IP ("+str(MY_IP)+") to the broadcast adress ("+str(BROADCAST_IP)+") on port "+str(BROADCAST_PORT)))
     # Broadcast own IP to broadcast adress
     broadcast(BROADCAST_IP, BROADCAST_PORT, str(MY_PROCESS_ID)+"-"+str(MY_IP))
-
     # Create a UDP socket for listening
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Set the socket to broadcast and enable reusing addresses
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listen_socket.settimeout(TIMEOUT)
-    
+    listen_socket.settimeout(TIMEOUT_SOCKET) # Socket timeout, if socket does not receive any message for x seconds it will stop listening
     # Bind socket to address and port
     listen_socket.bind((MY_IP, BROADCAST_LISTENING_PORT))
-    # Check for response n (REQUEST_TIMEOUT) amount of times. If there is no response, assume that there is no other server in the broadcast group yet.
-    timer=0
+    
+    '''
+    Configure timeout for duration between messages. 
+    Meaning that (after at least one message was already received and the socket timeout doesnt apply),
+    if theres no further responses timeout applies.
+    '''
     timeout = time.time()+TIMEOUT
     while True:
         print(prefixMessageWithDatetime("Listening for repsonses..."))
@@ -79,15 +85,23 @@ def join():
                     break             
                 
     print(prefixMessageWithDatetime("Updated Server list (process ID : IP adress): " + str(SERVER_LIST)))  
+    # Start election after joining
     election()  
     listen_socket.close()           
     
 def broadcast_listen():  
+    '''
+    The broadcast listener is used to listen for new servers joining the server group.
+    Listening for:
+    - IP adress
+    - Process ID
+    of the new server.
+    '''
     # Create a UDP socket
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Set the socket to broadcast and enable reusing addresses
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    # Bind socket to address and port
+    # Bind socket to address range and port
     listen_socket.bind(("", BROADCAST_LISTENING_PORT))
     
     print(prefixMessageWithDatetime("Listening to broadcast messages on Port " + str(BROADCAST_LISTENING_PORT) + "..."))
@@ -107,12 +121,17 @@ def broadcast_listen():
 
 
 def multicast_listen(): 
+    '''
+    The multicast listener is used to listen for leader announcments.
+    Listening for:
+    - IP adress OR Process ID (depends on the current implementation)
+    of the new leader.
+    '''
+    # Create UDP multicast socket, bind it to multicast group and port
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listen_socket.bind(("",MULTICAST_LISTENING_PORT))
-    
     membership = struct.pack("4sl", socket.inet_aton(SERVER_GROUP), socket.INADDR_ANY)
-    
     listen_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
     
     print(prefixMessageWithDatetime("Listening to multicast messages on Port " + str(MULTICAST_LISTENING_PORT) + "..."))
@@ -120,13 +139,19 @@ def multicast_listen():
     while True:
         
         data, addr = listen_socket.recvfrom(1024)
-        if data:
+        if data: # Received message from new leader
             response = data.decode()
+            global LEADER_IP
             LEADER_IP = response
             print(prefixMessageWithDatetime(f"Received message from new leader, adress: {addr}, message: {response}"))
                 
 
 def unicast_listen():
+    '''
+    The unicast listener is used to listen for messages prompting an election.
+    Listening for:
+    - Message directed to us, informing us to start our own election
+    '''
     # Create a UDP socket
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Set the socket to broadcast and enable reusing addresses
@@ -139,20 +164,26 @@ def unicast_listen():
         data, addr = listen_socket.recvfrom(1024)
         if data:
             response = data.decode()
-            print(prefixMessageWithDatetime(f"Received multicast message from {addr}: {response}"))
-            print(prefixMessageWithDatetime(f"Starting my election..."))
+            print(prefixMessageWithDatetime(f"Received unicast message from {addr}: {response}"))
             election()
           
 def election(): 
-    print(prefixMessageWithDatetime("Starting election..."))
+    '''
+    How the election works:
+    1. Iterate through all server in our server list
+    2. Check for all servers with a process ID larger than ours
+    3. If there is one with a larger PID, set foundLarger to True and send messages to those servers in order to pass on the election
+    4. If there is no server with a larger PID, Elect myself as leader and send a multicast message to the server group to inform them of my election as leader 
+    '''
+    print(prefixMessageWithDatetime("Starting my election..."))
     foundLarger = False
-    for key in SERVER_LIST:
+    for key in SERVER_LIST: 
         if key > MY_PROCESS_ID:
             foundLarger = True
             unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             unicast_socket.sendto(str.encode("Start your election!"), (SERVER_LIST[key], UNICAST_PORT))
     
-    if foundLarger == False:
+    if foundLarger == False: # In case I am the leader
         global LEADER_IP
         LEADER_IP = MY_IP
         print(prefixMessageWithDatetime("Election finished. I'm the leader now. Informing others..."))   
@@ -168,12 +199,20 @@ def send_heartbeats():
     multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 10)     
     
     while True:
-        time.sleep(1)   
-        print("sending...")
-        multicast_socket.sendto(str(MY_PROCESS_ID).encode(), (SERVER_HEARTBEAT_GROUP, HEARTBEAT_PORT))
+        time.sleep(1) # Send one heartbeat every second
+        print(prefixMessageWithDatetime("Sending heartbeat..."))
+        multicast_socket.sendto((str(MY_PROCESS_ID)+"-"+str(MY_IP)+"-"+str(LEADER_IP)).encode(), (SERVER_HEARTBEAT_GROUP, HEARTBEAT_PORT))
 
 def listen_for_heartbeats():
-    print("Listening for heartbeats...")
+    '''
+    How the heartbeat listener works:
+    1. Set up UDP multicast listener socket and listen for incomming heartbeat messages
+    2. If we receive a heartbeat, reset the timeout timer for the server which sent the message
+    3. Update the 'timers' dict in every loop iteration, based on the current updated server list
+    4. Reduce the timer for all servers from which we did not receive a message by 1
+      -> Check if one the timers has already hit 0, in that case assume that the server crashed and remove it from our server list
+    '''
+    print(prefixMessageWithDatetime("Listening for heartbeats..."))
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listen_socket.bind(("", HEARTBEAT_LISTENING_PORT))
@@ -182,34 +221,43 @@ def listen_for_heartbeats():
     listen_socket.settimeout(1)
     
     timers = {}
-      
+    global SERVER_LIST 
     while True:
         
         try:   
             data, addr = listen_socket.recvfrom(1024)
             if data:
-                response = int(data.decode())
-                print(f"received...{response}")
-                timers[response] = TIMEOUT_HEARTBEAT
-        except socket.timeout:
-            pass
-        
-        for i in list(SERVER_LIST.keys()):
-            if i != MY_PROCESS_ID and i not in timers: 
-                timers.update({i:TIMEOUT_HEARTBEAT})
+                response = data.decode()
+                response_array = response.split("-")
+                incomming_process_id = int(response_array[0])
+                incomming_ip = response_array[1]
+                incomming_leader_ip = response_array[2]
                 
-        for i in list(timers.keys()):
-            print(i)
+                ''' Fault tolerance: Check if incomming heartbeart agrees with me on who is the leader. If not, trigger election'''
+                if incomming_leader_ip != LEADER_IP:
+                    election()
+                
+                if incomming_process_id != MY_PROCESS_ID: # Ignore our own heartbeats
+                    print(prefixMessageWithDatetime(f"Received heartbeat from {incomming_ip}"))
+                    timers[incomming_process_id] = TIMEOUT_HEARTBEAT
+                    
+        except socket.timeout: # Wait for a new message for 1 second. If there isnt one, continue with the loop and try again next iteration
+            pass
+                
+        for i in list(timers.keys()): 
+            
+            ''' Fault tolerance: Check if all servers that send a heartbeat are in our server list. If not, add them.'''
+            if i not in SERVER_LIST.keys(): 
+                SERVER_LIST.update({incomming_process_id:incomming_ip})             
+        
             timers[i]=timers[i]-1
-            print(f"i: {i}  timers: {timers}")
+            print(prefixMessageWithDatetime(f"Timers: {timers}"))
             if timers[i] == 0:
                 print(prefixMessageWithDatetime(f"Not receiving heartbeats from Server: {i}. Removing from Server list...")) 
                 SERVER_LIST.pop(i) 
                 timers.pop(i)
                 print(prefixMessageWithDatetime(f"Updated Server list: {SERVER_LIST}"))
-                print(LEADER_IP, MY_IP)
-                if MY_IP != LEADER_IP:
-                    election()    
+                election()    
 
 ###################################### Helpers ########################################
 
@@ -229,10 +277,11 @@ if __name__ == '__main__':
     
     # Starting server instance
     print(prefixMessageWithDatetime("Starting server instance..."))
-    # Joining the broadcast group
+    # Joining the broadcast group, wait until completed
     join_thread = threading.Thread(target=join)
     join_thread.start()
     join_thread.join()
+    # Start listeners and heartbeat sender
     listener_thread = threading.Thread(target=broadcast_listen)
     listener_thread.start()
     
@@ -248,8 +297,6 @@ if __name__ == '__main__':
     heartbeat_listener_thread = threading.Thread(target=listen_for_heartbeats)
     heartbeat_listener_thread.start()
     
-    
-
     
     
     
