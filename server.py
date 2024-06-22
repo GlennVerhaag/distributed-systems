@@ -15,6 +15,8 @@ from datetime import datetime
 import time
 import os
 import struct
+import random
+import pickle
 
 #################################### Variables #######################################
 #
@@ -23,25 +25,24 @@ s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(("8.8.8.8", 80))
 #
 # Calculate broadcast IP here: https://jodies.de/ipcalc using your IPv4 Address and subnet mask (run "ipconfig" on windows to get adress and mask)
-BROADCAST_IP = "192.168.43.255"
+BROADCAST_IP = "192.168.178.255"
 BROADCAST_PORT = 5000
-BROADCAST_LISTENING_PORT = 5001
 SERVER_GROUP = "224.1.1.1"
 SERVER_HEARTBEAT_GROUP = "224.1.1.2"
 MULTICAST_PORT = 6000
-MULTICAST_LISTENING_PORT = 6001
 UNICAST_PORT = 7000
-UNICAST_LISTENING_PORT = 7001
 HEARTBEAT_PORT = 8000
-HEARTBEAT_LISTENING_PORT = 8001
+NEW_CLIENT_PORT = 9000
+CLIENT_MESSAGING_PORT = 10000
 MY_PROCESS_ID = os.getpid()
 MY_HOST = socket.gethostname()
-MY_IP = s.getsockname()[0]
+MY_IP = f"127.0.0.{random.randint(1,254)}"
 SERVER_LIST={MY_PROCESS_ID:MY_IP}
 CLIENT_LIST=[]
 TIMEOUT = 2 # How long should the server wait for responses to initial broadcast? In seconds
 TIMEOUT_SOCKET = 2 # How long until the socket times out when there are no responses? In seconds
 TIMEOUT_HEARTBEAT = 10
+HEARTBEAT_INTERVALL = 1
 LEADER_IP = ""
 
 #################################### Functions #######################################
@@ -52,14 +53,13 @@ def join():
     print(prefixMessageWithDatetime("Sending broadcast message with my IP ("+str(MY_IP)+") to the broadcast adress ("+str(BROADCAST_IP)+") on port "+str(BROADCAST_PORT)))
     # Broadcast own IP to broadcast adress
     broadcast(BROADCAST_IP, BROADCAST_PORT, str(MY_PROCESS_ID)+"-"+str(MY_IP))
-    # Create a UDP socket for listening
-    listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # Set the socket to broadcast and enable reusing addresses
-    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listen_socket.settimeout(TIMEOUT_SOCKET) # Socket timeout, if socket does not receive any message for x seconds it will stop listening
+
+    broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    broadcast_socket.settimeout(TIMEOUT_SOCKET) # Socket timeout, if socket does not receive any message for x seconds it will stop listening
+    broadcast_socket.bind((MY_IP, BROADCAST_PORT))
     # Bind socket to address and port
-    listen_socket.bind((MY_IP, BROADCAST_LISTENING_PORT))
     
     '''
     Configure timeout for duration between messages. 
@@ -73,7 +73,7 @@ def join():
         if time.time() > timeout:
             break
         try:
-            data, addr = listen_socket.recvfrom(1024)
+            data, addr = broadcast_socket.recvfrom(1024)
             if data:
                 print(prefixMessageWithDatetime(f"Received message from {addr}: {data.decode()}"))
                 response = data.decode()
@@ -87,7 +87,8 @@ def join():
     print(prefixMessageWithDatetime("Updated Server list (process ID : IP adress): " + str(SERVER_LIST)))  
     # Start election after joining
     election()  
-    listen_socket.close()           
+    broadcast_socket.close()
+          
     
 def broadcast_listen():  
     '''
@@ -101,19 +102,20 @@ def broadcast_listen():
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Set the socket to broadcast and enable reusing addresses
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     # Bind socket to address range and port
-    listen_socket.bind(("", BROADCAST_LISTENING_PORT))
+    listen_socket.bind(("", BROADCAST_PORT))
     
-    print(prefixMessageWithDatetime("Listening to broadcast messages on Port " + str(BROADCAST_LISTENING_PORT) + "..."))
+    print(prefixMessageWithDatetime("Listening to broadcast messages on Port " + str(BROADCAST_PORT) + "..."))
     
     while True:
         data, addr = listen_socket.recvfrom(1024)
         
         if data:
             response = data.decode()
-            print(prefixMessageWithDatetime(f"Received broadcast message from {addr}: {response}"))
             response_array = response.split("-")
             if response_array[0] not in SERVER_LIST:
+                print(prefixMessageWithDatetime(f"Received broadcast message from {addr}: {response}"))
                 SERVER_LIST.update({int(response_array[0]):response_array[1]})
                 print(prefixMessageWithDatetime(f"Updated my Server list: {SERVER_LIST}"))
                 print(prefixMessageWithDatetime(f"Sending my IP ({MY_IP}) back to the new Server (IP: {response_array[1]}, ProcessID: {response_array[0]})"))
@@ -130,20 +132,22 @@ def multicast_listen():
     # Create UDP multicast socket, bind it to multicast group and port
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listen_socket.bind(("",MULTICAST_LISTENING_PORT))
+    listen_socket.bind(("",MULTICAST_PORT))
     membership = struct.pack("4sl", socket.inet_aton(SERVER_GROUP), socket.INADDR_ANY)
     listen_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
     
-    print(prefixMessageWithDatetime("Listening to multicast messages on Port " + str(MULTICAST_LISTENING_PORT) + "..."))
+    print(prefixMessageWithDatetime("Listening to multicast messages on Port " + str(MULTICAST_PORT) + "..."))
     
     while True:
         
         data, addr = listen_socket.recvfrom(1024)
         if data: # Received message from new leader
             response = data.decode()
-            global LEADER_IP
-            LEADER_IP = response
-            print(prefixMessageWithDatetime(f"Received message from new leader, adress: {addr}, message: {response}"))
+            response_array = response.split("-")
+            if int(response_array[1]) != MY_PROCESS_ID: # Filter out own messages
+                global LEADER_IP
+                LEADER_IP = response_array[0]
+                print(prefixMessageWithDatetime(f"Received message from new leader, adress: {addr}, message: {response}"))
                 
 
 def unicast_listen():
@@ -153,19 +157,21 @@ def unicast_listen():
     - Message directed to us, informing us to start our own election
     '''
     # Create a UDP socket
-    listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Set the socket to broadcast and enable reusing addresses
-    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)                 
-    listen_socket.bind(("", UNICAST_LISTENING_PORT))
+    unicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    unicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)                  
+    unicast_socket.bind((MY_IP, UNICAST_PORT))
     
-    print(prefixMessageWithDatetime("Listening to unicast messages on Port " + str(UNICAST_LISTENING_PORT) + "..."))
+    print(prefixMessageWithDatetime("Listening to unicast messages on Port " + str(UNICAST_PORT) + "..."))
     
     while True:
-        data, addr = listen_socket.recvfrom(1024)
+        data, addr = unicast_socket.recvfrom(1024)
         if data:
             response = data.decode()
-            print(prefixMessageWithDatetime(f"Received unicast message from {addr}: {response}"))
-            election()
+            if MY_PROCESS_ID != int(response): # Filter out election messages sent by us
+                print(prefixMessageWithDatetime(f"Received unicast message from {addr}: {response}"))
+                election()
           
 def election(): 
     '''
@@ -181,7 +187,7 @@ def election():
         if key > MY_PROCESS_ID:
             foundLarger = True
             unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            unicast_socket.sendto(str.encode("Start your election!"), (SERVER_LIST[key], UNICAST_PORT))
+            unicast_socket.sendto(str.encode(str(MY_PROCESS_ID)), (SERVER_LIST[key], UNICAST_PORT))
     
     if foundLarger == False: # In case I am the leader
         global LEADER_IP
@@ -189,8 +195,8 @@ def election():
         print(prefixMessageWithDatetime("Election finished. I'm the leader now. Informing others..."))   
         multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 10)     
-        time.sleep(2)   
-        multicast_socket.sendto(MY_IP.encode(), (SERVER_GROUP, MULTICAST_PORT))    
+        time.sleep(3)   
+        multicast_socket.sendto((str(MY_IP)+"-"+str(MY_PROCESS_ID)).encode(), (SERVER_GROUP, MULTICAST_PORT))    
     else:
         print(prefixMessageWithDatetime("Found Server with larger Process ID, passed on election."))        
         
@@ -199,7 +205,7 @@ def send_heartbeats():
     multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 10)     
     
     while True:
-        time.sleep(1) # Send one heartbeat every second
+        time.sleep(5) # Send one heartbeat every 5 seconds
         print(prefixMessageWithDatetime("Sending heartbeat..."))
         multicast_socket.sendto((str(MY_PROCESS_ID)+"-"+str(MY_IP)+"-"+str(LEADER_IP)).encode(), (SERVER_HEARTBEAT_GROUP, HEARTBEAT_PORT))
 
@@ -212,13 +218,13 @@ def listen_for_heartbeats():
     4. Reduce the timer for all servers from which we did not receive a message by 1
       -> Check if one the timers has already hit 0, in that case assume that the server crashed and remove it from our server list
     '''
-    print(prefixMessageWithDatetime("Listening for heartbeats..."))
+    print(prefixMessageWithDatetime("Listening for heartbeats on Port: "+str(HEARTBEAT_PORT)+"..."))
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listen_socket.bind(("", HEARTBEAT_LISTENING_PORT))
+    listen_socket.bind(("", HEARTBEAT_PORT))
     membership = struct.pack("4sl", socket.inet_aton(SERVER_HEARTBEAT_GROUP), socket.INADDR_ANY)
     listen_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
-    listen_socket.settimeout(1)
+    listen_socket.settimeout(HEARTBEAT_INTERVALL)
     
     timers = {}
     global SERVER_LIST 
@@ -241,7 +247,7 @@ def listen_for_heartbeats():
                     print(prefixMessageWithDatetime(f"Received heartbeat from {incomming_ip}"))
                     timers[incomming_process_id] = TIMEOUT_HEARTBEAT
                     
-        except socket.timeout: # Wait for a new message for 1 second. If there isnt one, continue with the loop and try again next iteration
+        except socket.timeout: # Wait for a new message for 5 seconds. If there isnt one, continue with the loop and try again next iteration
             pass
                 
         for i in list(timers.keys()): 
@@ -258,6 +264,59 @@ def listen_for_heartbeats():
                 timers.pop(i)
                 print(prefixMessageWithDatetime(f"Updated Server list: {SERVER_LIST}"))
                 election()    
+                
+def listen_for_new_clients():
+    # Create a UDP socket
+    listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Set the socket to broadcast and enable reusing addresses
+    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # Bind socket to address range and port
+    listen_socket.bind(("", NEW_CLIENT_PORT))   
+    listen_socket.settimeout(1)   
+    
+    while True:
+        print(prefixMessageWithDatetime(f"Listening for new Clients on Port: "+ str(NEW_CLIENT_PORT)+"...")) 
+        while True:
+            if MY_IP == LEADER_IP:
+                try:
+                    data, addr = listen_socket.recvfrom(1024)
+                
+                    if data:
+                        response = data.decode()
+                        response_array = response.split("-")
+                        global CLIENT_LIST
+                        if response not in CLIENT_LIST and response_array[0] != MY_PROCESS_ID:
+                            CLIENT_LIST.append(response) 
+                            print(prefixMessageWithDatetime(f"New Client joined the chat. Username: "+ response_array[2]+ "| IP adress: "+ response_array[1]))
+                            broadcast(response_array[1], NEW_CLIENT_PORT, str(MY_PROCESS_ID)+"-"+str(MY_IP))
+                except socket.timeout: 
+                    pass  
+                        
+def listen_for_client_messages():
+    # Create a UDP socket
+    listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Set the socket to broadcast and enable reusing addresses
+    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # Bind socket to address range and port
+    listen_socket.bind(("", CLIENT_MESSAGING_PORT))
+    listen_socket.settimeout(1)
+
+    while True:
+        while True:
+            if MY_IP == LEADER_IP:
+                try:
+                    data, addr = listen_socket.recvfrom(1024)
+                    if data:
+                        print("message received")
+                        response = pickle.loads(data)
+                        if response[0] != MY_IP:
+                            print(prefixMessageWithDatetime("Received chat message, forwording to chat group."))
+                            broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            broadcast_socket.sendto(pickle.dumps([MY_IP, response[0], response[1], response[2]]), (BROADCAST_IP, CLIENT_MESSAGING_PORT))
+                except socket.timeout: 
+                    pass                    
 
 ###################################### Helpers ########################################
 
@@ -266,6 +325,7 @@ def broadcast(ip, port, broadcast_message):
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Send message on broadcast address
     broadcast_socket.sendto(str.encode(broadcast_message), (ip, port))
+    broadcast_socket.close()
     
 def prefixMessageWithDatetime(message):
     # Add Current date and time to input message and return
@@ -282,6 +342,7 @@ if __name__ == '__main__':
     join_thread.start()
     join_thread.join()
     # Start listeners and heartbeat sender
+    
     listener_thread = threading.Thread(target=broadcast_listen)
     listener_thread.start()
     
@@ -295,6 +356,12 @@ if __name__ == '__main__':
     heartbeat_sender_thread.start()
     
     heartbeat_listener_thread = threading.Thread(target=listen_for_heartbeats)
+    heartbeat_listener_thread.start()
+    
+    heartbeat_listener_thread = threading.Thread(target=listen_for_new_clients)
+    heartbeat_listener_thread.start()
+    
+    heartbeat_listener_thread = threading.Thread(target=listen_for_client_messages)
     heartbeat_listener_thread.start()
     
     
