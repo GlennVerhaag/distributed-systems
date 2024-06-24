@@ -36,14 +36,15 @@ NEW_CLIENT_PORT = 9000
 CLIENT_MESSAGING_PORT = 10000
 MY_PROCESS_ID = os.getpid()
 MY_HOST = socket.gethostname()
-MY_IP = f"127.0.0.{random.randint(1,254)}"
+MY_IP = s.getsockname()[0]
 SERVER_LIST={MY_PROCESS_ID:MY_IP}
 CLIENT_LIST=[]
 TIMEOUT = 2 # How long should the server wait for responses to initial broadcast? In seconds
 TIMEOUT_SOCKET = 2 # How long until the socket times out when there are no responses? In seconds
-TIMEOUT_HEARTBEAT = 10
+TIMEOUT_HEARTBEAT = 15
 HEARTBEAT_INTERVALL = 1
 LEADER_IP = ""
+LEADER_PID = ""
 
 #################################### Functions #######################################
  
@@ -146,7 +147,9 @@ def multicast_listen():
             response_array = response.split("-")
             if int(response_array[1]) != MY_PROCESS_ID: # Filter out own messages
                 global LEADER_IP
+                global LEADER_PID
                 LEADER_IP = response_array[0]
+                LEADER_PID = response_array[1]
                 print(prefixMessageWithDatetime(f"Received message from new leader, adress: {addr}, message: {response}"))
                 
 
@@ -191,7 +194,9 @@ def election():
     
     if foundLarger == False: # In case I am the leader
         global LEADER_IP
+        global LEADER_PID
         LEADER_IP = MY_IP
+        LEADER_PID = MY_PROCESS_ID
         print(prefixMessageWithDatetime("Election finished. I'm the leader now. Informing others..."))   
         multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 10)     
@@ -278,18 +283,17 @@ def listen_for_new_clients():
     while True:
         print(prefixMessageWithDatetime(f"Listening for new Clients on Port: "+ str(NEW_CLIENT_PORT)+"...")) 
         while True:
-            if MY_IP == LEADER_IP:
+            if MY_IP == LEADER_IP and LEADER_PID == MY_PROCESS_ID:
                 try:
                     data, addr = listen_socket.recvfrom(1024)
                 
                     if data:
-                        response = data.decode()
-                        response_array = response.split("-")
+                        response = pickle.loads(data)
                         global CLIENT_LIST
-                        if response not in CLIENT_LIST and response_array[0] != MY_PROCESS_ID:
-                            CLIENT_LIST.append(response) 
-                            print(prefixMessageWithDatetime(f"New Client joined the chat. Username: "+ response_array[2]+ "| IP adress: "+ response_array[1]))
-                            broadcast(response_array[1], NEW_CLIENT_PORT, str(MY_PROCESS_ID)+"-"+str(MY_IP))
+                        if response[1] != MY_PROCESS_ID:# response[1] not in CLIENT_LIST and 
+                            # CLIENT_LIST.append(response[1]) 
+                            print(prefixMessageWithDatetime(f"New Client joined the chat. Username: "+ response[2]+ "| IP adress: "+ response[0]))
+                            broadcast(response[0], NEW_CLIENT_PORT, pickle.dumps([MY_IP,MY_PROCESS_ID,"",""]), True)
                 except socket.timeout: 
                     pass  
                         
@@ -305,26 +309,30 @@ def listen_for_client_messages():
 
     while True:
         while True:
-            if MY_IP == LEADER_IP:
+            if MY_IP == LEADER_IP and LEADER_PID == MY_PROCESS_ID:
                 try:
                     data, addr = listen_socket.recvfrom(1024)
                     if data:
                         print("message received")
                         response = pickle.loads(data)
-                        if response[0] != MY_IP:
+                        
+                        if response[1] != MY_PROCESS_ID:
                             print(prefixMessageWithDatetime("Received chat message, forwording to chat group."))
                             broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                            broadcast_socket.sendto(pickle.dumps([MY_IP, response[0], response[1], response[2]]), (BROADCAST_IP, CLIENT_MESSAGING_PORT))
+                            broadcast_socket.sendto(pickle.dumps([MY_IP, MY_PROCESS_ID, response[0], response[1], response[2], response[3]]), (BROADCAST_IP, CLIENT_MESSAGING_PORT))
                 except socket.timeout: 
                     pass                    
 
 ###################################### Helpers ########################################
 
-def broadcast(ip, port, broadcast_message):
+def broadcast(ip, port, broadcast_message, already_encoded = False):
     # Create a UDP socket
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Send message on broadcast address
-    broadcast_socket.sendto(str.encode(broadcast_message), (ip, port))
+    if already_encoded == False:
+        broadcast_socket.sendto(str.encode(broadcast_message), (ip, port))
+    else:
+        broadcast_socket.sendto(broadcast_message, (ip, port))
     broadcast_socket.close()
     
 def prefixMessageWithDatetime(message):
