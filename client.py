@@ -23,7 +23,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(("8.8.8.8", 80))
 #
-BROADCAST_IP = "192.168.178.255"
+BROADCAST_IP = "172.20.10.15"
 NEW_CLIENT_PORT = 9000
 CLIENT_MESSAGING_PORT = 10000
 TIMEOUT_INTERVALL = 0.5
@@ -122,7 +122,7 @@ def send_join_message(username):
     # Bind socket to address range and port
     listen_socket.bind((MY_IP, NEW_CLIENT_PORT)) 
     listen_socket.settimeout(1)
-    global LEADER_IP#
+    global LEADER_IP
     global LEADER_PID
     
     while True:
