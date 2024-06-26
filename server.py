@@ -39,8 +39,8 @@ MY_HOST = socket.gethostname()
 MY_IP = s.getsockname()[0]
 SERVER_LIST={MY_PROCESS_ID:MY_IP}
 CLIENT_LIST=[]
-TIMEOUT = 5 # How long should the server wait for responses to initial broadcast? In seconds
-TIMEOUT_SOCKET = 5 # How long until the socket times out when there are no responses? In seconds
+TIMEOUT = 3 # How long should the server wait for responses to initial broadcast? In seconds
+TIMEOUT_SOCKET = 3 # How long until the socket times out when there are no responses? In seconds
 TIMEOUT_HEARTBEAT = 15
 HEARTBEAT_INTERVALL = 1
 LEADER_IP = ""
@@ -281,21 +281,19 @@ def listen_for_new_clients():
     listen_socket.settimeout(1)   
     
     while True:
-        print(prefixMessageWithDatetime(f"Listening for new Clients on Port: "+ str(NEW_CLIENT_PORT)+"...")) 
-        while True:
-            if MY_IP == LEADER_IP and LEADER_PID == MY_PROCESS_ID:
-                try:
-                    data, addr = listen_socket.recvfrom(1024)
-                
-                    if data:
-                        response = pickle.loads(data)
-                        global CLIENT_LIST
-                        if response[1] != MY_PROCESS_ID and response[1] not in CLIENT_LIST:
-                            CLIENT_LIST.append(response[1]) 
-                            print(prefixMessageWithDatetime(f"New Client joined the chat. Username: "+ response[2]+ "| IP adress: "+ response[0]))
-                            broadcast(response[0], NEW_CLIENT_PORT, pickle.dumps([MY_IP,MY_PROCESS_ID,"",""]), True)
-                except socket.timeout: 
-                    pass  
+        if MY_IP == LEADER_IP and LEADER_PID == MY_PROCESS_ID:
+            try:
+                data, addr = listen_socket.recvfrom(1024)
+            
+                if data:
+                    response = pickle.loads(data)
+                    global CLIENT_LIST
+                    if response[1] != MY_PROCESS_ID and response[1] not in CLIENT_LIST:
+                        CLIENT_LIST.append(response[1]) 
+                        print(prefixMessageWithDatetime(f"New Client joined the chat. Username: "+ response[2]+ "| IP adress: "+ response[0]))
+                        broadcast(BROADCAST_IP, NEW_CLIENT_PORT, pickle.dumps([MY_IP,MY_PROCESS_ID, "Server", 1]), True)
+            except socket.timeout: 
+                pass  
                         
 def listen_for_client_messages():
     # Create a UDP socket
@@ -308,20 +306,18 @@ def listen_for_client_messages():
     listen_socket.settimeout(1)
 
     while True:
-        while True:
-            if MY_IP == LEADER_IP and LEADER_PID == MY_PROCESS_ID:
-                try:
-                    data, addr = listen_socket.recvfrom(1024)
-                    if data:
-                        print("message received")
-                        response = pickle.loads(data)
-                        
-                        if response[1] != MY_PROCESS_ID:
-                            print(prefixMessageWithDatetime("Received chat message, forwording to chat group."))
-                            broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                            broadcast_socket.sendto(pickle.dumps([MY_IP, MY_PROCESS_ID, response[0], response[1], response[2], response[3]]), (BROADCAST_IP, CLIENT_MESSAGING_PORT))
-                except socket.timeout: 
-                    pass                    
+        if MY_IP == LEADER_IP and LEADER_PID == MY_PROCESS_ID:   
+            try:
+                data, addr = listen_socket.recvfrom(1024)
+                if data:
+                    response = pickle.loads(data)
+                    
+                    if response[1] != MY_PROCESS_ID and isinstance(response[2], int) != True and isinstance(response[3], int) != True:
+                        print(prefixMessageWithDatetime("Received chat message, forwording to chat group."))
+                        broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        broadcast_socket.sendto(pickle.dumps([MY_IP, MY_PROCESS_ID, response[0], response[1], response[2], response[3]]), (BROADCAST_IP, CLIENT_MESSAGING_PORT))
+            except socket.timeout: 
+                pass                    
 
 ###################################### Helpers ########################################
 
@@ -337,7 +333,7 @@ def broadcast(ip, port, broadcast_message, already_encoded = False):
     
 def prefixMessageWithDatetime(message):
     # Add Current date and time to input message and return
-    return datetime.now().strftime("%d.%m.%Y | %H:%M:%S")+" :: "+ message
+    return datetime.now().strftime("%H:%M:%S")+" :: "+ message
     
 ###################################### Main ##########################################
 
@@ -351,8 +347,8 @@ if __name__ == '__main__':
     join_thread.join()
     # Start listeners and heartbeat sender
     
-    listener_thread = threading.Thread(target=broadcast_listen)
-    listener_thread.start()
+    broadcast_listener_thread = threading.Thread(target=broadcast_listen)
+    broadcast_listener_thread.start()
     
     multicast_listener_thread = threading.Thread(target=multicast_listen)
     multicast_listener_thread.start()
@@ -366,11 +362,11 @@ if __name__ == '__main__':
     heartbeat_listener_thread = threading.Thread(target=listen_for_heartbeats)
     heartbeat_listener_thread.start()
     
-    heartbeat_listener_thread = threading.Thread(target=listen_for_new_clients)
-    heartbeat_listener_thread.start()
+    client_listener_thread = threading.Thread(target=listen_for_new_clients)
+    client_listener_thread.start()
     
-    heartbeat_listener_thread = threading.Thread(target=listen_for_client_messages)
-    heartbeat_listener_thread.start()
+    message_listener_thread = threading.Thread(target=listen_for_client_messages)
+    message_listener_thread.start()
     
     
     
