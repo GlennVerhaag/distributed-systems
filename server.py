@@ -31,6 +31,7 @@ SERVER_GROUP = "224.1.1.1"
 SERVER_HEARTBEAT_GROUP = "224.1.1.2"
 MULTICAST_PORT = 6000
 UNICAST_PORT = 7000
+ELECTION_PORT = 7500
 HEARTBEAT_PORT = 8000
 NEW_CLIENT_PORT = 9000
 CLIENT_MESSAGING_PORT = 10000
@@ -161,19 +162,21 @@ def unicast_listen():
     '''
     # Create a UDP socket
     unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # Set the socket to broadcast and enable reusing addresses
-    unicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    # Enable reusing addresses
+    # unicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     unicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)                  
     unicast_socket.bind((MY_IP, UNICAST_PORT))
     
     print(prefixMessageWithDatetime("Listening to unicast messages on Port " + str(UNICAST_PORT) + "..."))
     
     while True:
-        data, addr = unicast_socket.recvfrom(1024)
+        data, (ip, port) = unicast_socket.recvfrom(1024)
         if data:
             response = data.decode()
             if MY_PROCESS_ID != int(response): # Filter out election messages sent by us
-                print(prefixMessageWithDatetime(f"Received unicast message from {addr}: {response}"))
+                print(prefixMessageWithDatetime(f"Received unicast message from Server with IP: {ip} and PID: {response}, responding and starting my own election."))
+                unicast_sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                unicast_sender_socket.sendto(str.encode("OK"), (ip, ELECTION_PORT))
                 election()
           
 def election(): 
@@ -184,14 +187,42 @@ def election():
     3. If there is one with a larger PID, set foundLarger to True and send messages to those servers in order to pass on the election
     4. If there is no server with a larger PID, Elect myself as leader and send a multicast message to the server group to inform them of my election as leader 
     '''
+    # Create a UDP socket
+    unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    unicast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)                  
+    unicast_socket.bind((MY_IP, ELECTION_PORT))
+    unicast_socket.settimeout(2)
+    
     print(prefixMessageWithDatetime("Starting my election..."))
     foundLarger = False
+    responseFromLarger = False
     for key in SERVER_LIST: 
         if key > MY_PROCESS_ID:
             foundLarger = True
-            unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            unicast_socket.sendto(str.encode(str(MY_PROCESS_ID)), (SERVER_LIST[key], UNICAST_PORT))
-    
+            unicast_sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            unicast_sender_socket.sendto(str.encode(str(MY_PROCESS_ID)), (SERVER_LIST[key], UNICAST_PORT))
+            while True: 
+                try: 
+                    data, addr = unicast_socket.recvfrom(1024)
+                    if data:
+                        responseFromLarger = True
+                except socket.timeout:
+                    break
+                
+    print(responseFromLarger, foundLarger)           
+    if responseFromLarger == False or foundLarger == False:                
+        global LEADER_IP
+        global LEADER_PID
+        LEADER_IP = MY_IP
+        LEADER_PID = MY_PROCESS_ID
+        print(prefixMessageWithDatetime("Election finished. I'm the leader now. Informing others..."))   
+        multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 10)     
+        # time.sleep(0.5)   
+        multicast_socket.sendto((str(MY_IP)+"-"+str(MY_PROCESS_ID)).encode(), (SERVER_GROUP, MULTICAST_PORT))    
+    else:
+        print(prefixMessageWithDatetime("Found Server with larger Process ID, passed on election."))        
+    '''
     if foundLarger == False: # In case I am the leader
         global LEADER_IP
         global LEADER_PID
@@ -200,10 +231,11 @@ def election():
         print(prefixMessageWithDatetime("Election finished. I'm the leader now. Informing others..."))   
         multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         multicast_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 10)     
-        time.sleep(3)   
+        # time.sleep(0.5)   
         multicast_socket.sendto((str(MY_IP)+"-"+str(MY_PROCESS_ID)).encode(), (SERVER_GROUP, MULTICAST_PORT))    
     else:
         print(prefixMessageWithDatetime("Found Server with larger Process ID, passed on election."))        
+    '''
         
 def send_heartbeats():
     multicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
