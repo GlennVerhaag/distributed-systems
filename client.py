@@ -120,10 +120,10 @@ def send_join_message(username):
     # Create a UDP socket
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Set the socket to broadcast and enable reusing addresses
-    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    # listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     # Bind socket to address range and port
-    listen_socket.bind(("", NEW_CLIENT_PORT)) 
+    listen_socket.bind((MY_IP, NEW_CLIENT_PORT)) 
     listen_socket.settimeout(TIMEOUT_INTERVALL)
     global LEADER_IP
     global LEADER_PID

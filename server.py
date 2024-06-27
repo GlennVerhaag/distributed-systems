@@ -291,7 +291,7 @@ def listen_for_new_clients():
                     if response[1] != MY_PROCESS_ID and response[3] != 1: #response[1] not in CLIENT_LIST:
                         #CLIENT_LIST.append(response[1]) 
                         print(prefixMessageWithDatetime(f"New Client joined the chat. Username: "+ response[2]+ "| IP adress: "+ response[0]))
-                        broadcast(BROADCAST_IP, NEW_CLIENT_PORT, pickle.dumps([MY_IP,MY_PROCESS_ID, "Server", 1]), True)
+                        broadcast(response[0], NEW_CLIENT_PORT, pickle.dumps([MY_IP,MY_PROCESS_ID, "Server", 1]), True)
             except socket.timeout: 
                 pass  
                         
