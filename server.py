@@ -52,7 +52,7 @@ LEADER_PID = ""
 def join():
     
     # Document the broadcast of own IP
-    print(prefixMessageWithDatetime("Sending broadcast message with my IP ("+str(MY_IP)+") to the broadcast adress ("+str(BROADCAST_IP)+") on port "+str(BROADCAST_PORT)))
+    print(prefixMessageWithDatetime("Sending broadcast message with my IP ("+str(MY_IP)+") and my processID ("+str(MY_PROCESS_ID)+") to the broadcast adress ("+str(BROADCAST_IP)+") on port "+str(BROADCAST_PORT)))
     # Broadcast own IP to broadcast adress
     broadcast(BROADCAST_IP, BROADCAST_PORT, str(MY_PROCESS_ID)+"-"+str(MY_IP))
 
@@ -208,8 +208,7 @@ def election():
                         responseFromLarger = True
                 except socket.timeout:
                     break
-                
-    print(responseFromLarger, foundLarger)           
+                           
     if responseFromLarger == False or foundLarger == False:                
         global LEADER_IP
         global LEADER_PID
