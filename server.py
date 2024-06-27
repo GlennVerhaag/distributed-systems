@@ -25,7 +25,7 @@ s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(("8.8.8.8", 80))
 #
 # Calculate broadcast IP here: https://jodies.de/ipcalc using your IPv4 Address and subnet mask (run "ipconfig" on windows to get adress and mask)
-BROADCAST_IP = "172.20.10.15"
+BROADCAST_IP = "192.168.43.255"
 BROADCAST_PORT = 5000
 SERVER_GROUP = "224.1.1.1"
 SERVER_HEARTBEAT_GROUP = "224.1.1.2"
@@ -288,8 +288,8 @@ def listen_for_new_clients():
                 if data:
                     response = pickle.loads(data)
                     global CLIENT_LIST
-                    if response[1] != MY_PROCESS_ID and response[1] not in CLIENT_LIST:
-                        CLIENT_LIST.append(response[1]) 
+                    if response[1] != MY_PROCESS_ID and response[3] != 1: #response[1] not in CLIENT_LIST:
+                        #CLIENT_LIST.append(response[1]) 
                         print(prefixMessageWithDatetime(f"New Client joined the chat. Username: "+ response[2]+ "| IP adress: "+ response[0]))
                         broadcast(BROADCAST_IP, NEW_CLIENT_PORT, pickle.dumps([MY_IP,MY_PROCESS_ID, "Server", 1]), True)
             except socket.timeout: 

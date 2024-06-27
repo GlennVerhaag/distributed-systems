@@ -23,7 +23,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(("8.8.8.8", 80))
 #
-BROADCAST_IP = "172.20.10.15"
+BROADCAST_IP = "192.168.43.255"
 NEW_CLIENT_PORT = 9000
 CLIENT_MESSAGING_PORT = 10000
 TIMEOUT_INTERVALL = 1
