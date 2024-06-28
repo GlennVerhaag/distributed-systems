@@ -12,7 +12,6 @@ from datetime import datetime
 import os
 import sys
 import pickle
-import random
 from prompt_toolkit import PromptSession
 session = PromptSession()
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -22,15 +21,16 @@ from prompt_toolkit.patch_stdout import patch_stdout
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(("8.8.8.8", 80))
 #
-BROADCAST_IP = "192.168.178.255"
+BROADCAST_IP = "192.168.43.255"
 NEW_CLIENT_PORT = 9000
 CLIENT_MESSAGING_PORT = 10000
-TIMEOUT_INTERVALL = 3
-
-MY_IP = f"127.0.0.{random.randint(1,254)}"
+TIMEOUT_INTERVALL = 1
+ 
+MY_IP = s.getsockname()[0]
 MY_PROCESS_ID = os.getpid()
 LEADER_IP = ""
 USERNAME = ""
+LEADER_PID = ""
 
 #################################### Functions #######################################
 
@@ -44,37 +44,40 @@ def join():
     sys.exit(0)
                 
 def send_chat_message():
-    # Create a UDP socket
-    listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # Set the socket to broadcast and enable reusing addresses
-    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    # Bind socket to address range and port
-    listen_socket.bind(("", CLIENT_MESSAGING_PORT))
-    listen_socket.settimeout(TIMEOUT_INTERVALL)
     
     while True:
+        # Create a UDP socket
+        listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Set the socket to broadcast and enable reusing addresses
+        listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Bind socket to address range and port
+        listen_socket.bind(("", CLIENT_MESSAGING_PORT))
+        listen_socket.settimeout(TIMEOUT_INTERVALL)
         server_response = False
         with patch_stdout():
             message = session.prompt(prefixMessageWithDatetime(USERNAME+' > '))
             # message = input(prefixMessageWithDatetime("Message: "))
-            broadcast(BROADCAST_IP, CLIENT_MESSAGING_PORT, pickle.dumps([MY_IP,message,USERNAME,""]) )
+            broadcast(BROADCAST_IP, CLIENT_MESSAGING_PORT, pickle.dumps([MY_IP, MY_PROCESS_ID, message, USERNAME]) )
             print( "✔️", end="", flush=True)
             while True:
                 try:
                     data, addr = listen_socket.recvfrom(1024)
                     if data : 
                         response = pickle.loads(data)
-                        if response[0] != MY_IP:
+                        if response[1] != MY_PROCESS_ID and response[0] == LEADER_IP and response[1] == LEADER_PID:
                             server_response = True
                             print("✔️")
+                            listen_socket.close()
                             break
                             
                 except socket.timeout: 
+                    listen_socket.close()
                     break            
             if server_response == False :   
                 print("\n"+prefixMessageWithDatetime("Message could not be delivered. Reconnecting to Server..."))
                 send_join_message(USERNAME)
+                listen_socket.close()
                 pass
             
 def listen_for_messages():
@@ -92,9 +95,9 @@ def listen_for_messages():
             data, addr = listen_socket.recvfrom(1024)
             if data : 
                 response = pickle.loads(data)
-                if response[0] != MY_IP and response[1] != MY_IP:
-                    if response[0] == LEADER_IP:
-                        print(prefixMessageWithDatetime(response[3])+" > "+response[2])
+                if response[1] != MY_PROCESS_ID and response[3] != MY_PROCESS_ID:
+                    if response[0] == LEADER_IP and response[1] == LEADER_PID:
+                        print(prefixMessageWithDatetime(str(response[5]))+" > "+str(response[4]))
                     
         except socket.timeout: 
             pass            
@@ -109,33 +112,35 @@ def broadcast(ip, port, broadcast_message):
     
 def prefixMessageWithDatetime(message):
     # Add Current date and time to input message and return
-    return datetime.now().strftime("%d.%m.%Y | %H:%M:%S")+" :: "+ message    
+    return datetime.now().strftime("%H:%M:%S")+" :: "+ message    
 
 def send_join_message(username):
     # Create a UDP socket
     listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # Set the socket to broadcast and enable reusing addresses
-    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    # listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     # Bind socket to address range and port
     listen_socket.bind((MY_IP, NEW_CLIENT_PORT)) 
-    listen_socket.settimeout(2)
+    listen_socket.settimeout(TIMEOUT_INTERVALL)
+    global LEADER_IP
+    global LEADER_PID
     
     while True:
-            broadcast(BROADCAST_IP, NEW_CLIENT_PORT, str.encode(str(MY_PROCESS_ID)+"-"+str(MY_IP)+"-"+username))
+            broadcast(BROADCAST_IP, NEW_CLIENT_PORT, pickle.dumps([MY_IP,MY_PROCESS_ID, USERNAME, 0]))
             print(prefixMessageWithDatetime("Connecting..."))
             try:
-                data, addr = listen_socket.recvfrom(1024)
-        
-                if data:  
-                    response = data.decode()
-                    response_array = response.split("-")
-                    if response_array[1] != MY_IP:
-                        global LEADER_IP
-                        LEADER_IP = response_array[1]
-                        print(prefixMessageWithDatetime("Sucessfully joined the chatroom. IP adress of the leading Server: " +LEADER_IP))
-                        print("")
-                        return
+                while True:
+                    data, addr = listen_socket.recvfrom(1024)
+            
+                    if data:  
+                        response = pickle.loads(data)
+                        if response[1] != MY_PROCESS_ID and response[3] == 1: 
+                            LEADER_IP = response[0]
+                            LEADER_PID = response[1]
+                            print(prefixMessageWithDatetime("Sucessfully joined the chatroom. IP adress of the leading Server: " +LEADER_IP))
+                            print("")
+                            return
             except socket.timeout: 
                 pass
                 

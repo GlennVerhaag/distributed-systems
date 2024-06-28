@@ -12,8 +12,11 @@ Fault Tolerance:: In order to ensure consistent operation of the system, failure
 
 == Architecture
 
-.Dynamic Discovery
-image::images\Discovery.png[width=700]
+.Dynamic Discovery - New server and client join the network
+image::images\join1.png[width=700]
+
+.Dynamic Discovery - Existing servers respond
+image::images\join2.png[width=700]
 
 .Communication between clients
 image::images\Comms.png[width=700]
@@ -28,7 +31,7 @@ To start a server locally, simply run:
 server.py
 ----
 
-Once the server instance is started, it will broadcast its IP adress and check if its broadcast group already has a leader. If not, the server elects itself as the leader. If the broadcast group already has a leader, an election is triggered. The server with the highest process ID is elected as the new leader. If there has been a switch in leadership, the old leader acknowledges that it is no longer the leader of the group. The newly elected leader updates its group view and replicates it across the broadcast group, informing other servers of its new leadership position. 
+Once the server instance is started, it will broadcast its IP adress and PID to the broadcast group and trigger an election amongst all servers in the network.
 
 === Client
 To start a client locally, simply run: 
@@ -37,5 +40,5 @@ To start a client locally, simply run:
 ----
 client.py
 ----
-Once the new client instance is started, it will broadcast its IP adress to the broadcast group. In return, it receives the current group view including information about the leader. Once the setup is complete, the client can continue with its chat application specific tasks like choosing a username and sending chat messages. The leader receives the messages sent by the client and distributes them accordingly. If there are multiple clients present in the same broadcast group, the clients can communicate with each other via the leading server.
+Once the new client instance is started, it will broadcast its IP adress and PID to the broadcast (server-) group. The leading server will then respond with its own information and the communication of clients via the leading server can begin. 
 
