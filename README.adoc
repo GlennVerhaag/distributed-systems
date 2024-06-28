@@ -12,12 +12,10 @@ Fault Tolerance:: In order to ensure consistent operation of the system, failure
 
 == Architecture
 
-.Dynamic Discovery
-New server and client join the network:
+.Dynamic Discovery - New server and client join the network
 image::images\join1.png[width=700]
 
-
-Existing servers respond:
+.Dynamic Discovery - Existing servers respond
 image::images\join2.png[width=700]
 
 .Communication between clients
