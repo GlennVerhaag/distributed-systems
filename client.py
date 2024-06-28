@@ -12,8 +12,6 @@ from datetime import datetime
 import os
 import sys
 import pickle
-import random
-import time
 from prompt_toolkit import PromptSession
 session = PromptSession()
 from prompt_toolkit.patch_stdout import patch_stdout

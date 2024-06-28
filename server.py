@@ -15,7 +15,6 @@ from datetime import datetime
 import time
 import os
 import struct
-import random
 import pickle
 
 #################################### Variables #######################################
