@@ -59,8 +59,7 @@ def join():
     broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     broadcast_socket.settimeout(TIMEOUT_SOCKET) # Socket timeout, if socket does not receive any message for x seconds it will stop listening
-    broadcast_socket.bind((MY_IP, BROADCAST_PORT))
-    # Bind socket to address and port
+    broadcast_socket.bind((MY_IP, BROADCAST_PORT)) # Bind socket to address and port
     
     '''
     Configure timeout for duration between messages. 
